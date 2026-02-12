@@ -1,16 +1,12 @@
 # MacConnect
 
-A new Flutter project.
+Connect your mobile phone (iPhone or Android) to the MacOS
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+You may connect through:
+1. Same Wifi network
+2. Mobile hotspot to mac wifi connection
+3. USB Type-C connection
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+You may transfer files between your mobile and MacOS.
