@@ -1,10 +1,13 @@
 import 'dart:io';
 
 import 'package:file/local.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_dav/shelf_dav.dart';
+
+import 'webdav_task_handler.dart';
 
 /// How the Mac connects to this device: same WiFi, phone hotspot, or USB.
 enum ConnectionType {
@@ -28,10 +31,26 @@ class WebDavService {
   String? _sharePath;
   ConnectionType _connectionType = ConnectionType.wifi;
 
-  bool get isRunning => _server != null;
+  /// Whether the server is running (main isolate on iOS, foreground service on Android).
+  Future<bool> get isRunning async {
+    if (Platform.isAndroid) return FlutterForegroundTask.isRunningService;
+    return _server != null;
+  }
 
-  /// Path on device that is shared (for display only).
+  /// Path on device that is shared (for display / open file manager). Same path on Android & iOS.
   String? get sharePath => _sharePath;
+
+  /// Returns the shared folder path. Use this for opening file manager (works when server off too).
+  static Future<String> getSharePath() async {
+    if (Platform.isAndroid) {
+      try {
+        final ext = await getExternalStorageDirectory();
+        if (ext != null) return '${ext.path}/SharedWithMac';
+      } catch (_) {}
+    }
+    final appDir = await getApplicationDocumentsDirectory();
+    return '${appDir.path}/SharedWithMac';
+  }
 
   /// Current connection type (used when building the Mac URL/instructions).
   ConnectionType get connectionType => _connectionType;
@@ -39,13 +58,29 @@ class WebDavService {
   /// Start the WebDAV server. Shares a folder under app documents.
   /// [type] controls how the Mac will connect (WiFi, Hotspot, or USB).
   /// Returns the URL for Mac (null for USB – use localhost + adb instructions).
+  /// On Android runs in a foreground service so it keeps running when app is backgrounded.
   Future<String?> start(ConnectionType type) async {
     _connectionType = type;
 
+    if (Platform.isAndroid) {
+      if (await FlutterForegroundTask.isRunningService) return _getUrl();
+      _sharePath = await getSharePath();
+      final dir = Directory(_sharePath!);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      await FlutterForegroundTask.saveData(key: 'sharePath', value: _sharePath!);
+      await FlutterForegroundTask.startService(
+        notificationTitle: 'Mac Connect',
+        notificationText: 'File share is running — tap to open',
+        callback: webDavTaskCallback,
+        serviceTypes: [ForegroundServiceTypes.dataSync],
+      );
+      return _getUrl();
+    }
+
+    // iOS (and other platforms): run server in process
     if (_server != null) return _getUrl();
 
-    final appDir = await getApplicationDocumentsDirectory();
-    _sharePath = '${appDir.path}/SharedWithMac';
+    _sharePath = await getSharePath();
     final dir = Directory(_sharePath!);
     if (!await dir.exists()) await dir.create(recursive: true);
 
@@ -56,6 +91,8 @@ class WebDavService {
       prefix: prefix,
       allowAnonymous: true,
       readOnly: false,
+      verbose: true,
+      enableThrottling: false,
     );
     final dav = ShelfDAV.withConfig(config);
 
@@ -65,6 +102,7 @@ class WebDavService {
         InternetAddress.anyIPv4,
         port,
       );
+      _server!.idleTimeout = const Duration(hours: 8);
       return _getUrl();
     } catch (e) {
       _sharePath = null;
@@ -74,12 +112,16 @@ class WebDavService {
 
   /// Stop the WebDAV server.
   Future<void> stop() async {
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.sendDataToTask(WebDavTaskHandler.stopCommand);
+      await FlutterForegroundTask.stopService();
+      _sharePath = null;
+      return;
+    }
     final server = _server;
     _server = null;
     _sharePath = null;
-    if (server != null) {
-      await server.close(force: true);
-    }
+    if (server != null) await server.close(force: true);
   }
 
   /// Get the URL for Mac based on current [connectionType].
@@ -88,11 +130,11 @@ class WebDavService {
       case ConnectionType.wifi:
         final ip = await _getWifiIp();
         if (ip == null || ip.isEmpty) return null;
-        return 'http://$ip:$port$prefix';
+        return 'http://$ip:$port$prefix/';
       case ConnectionType.hotspot:
         final ip = await _getHotspotIp();
         if (ip == null || ip.isEmpty) return null;
-        return 'http://$ip:$port$prefix';
+        return 'http://$ip:$port$prefix/';
       case ConnectionType.usb:
         return null; // Mac uses localhost + adb forward
     }
@@ -146,10 +188,11 @@ class WebDavService {
 
   /// Get current connection URL (null if server not running or IP unknown / USB).
   Future<String?> getConnectionUrl() async {
+    if (Platform.isAndroid && await FlutterForegroundTask.isRunningService) return _getUrl();
     if (_server == null) return null;
     return _getUrl();
   }
 
   /// URL the Mac should use for USB mode (after adb forward on Mac).
-  static String get localhostUrl => 'http://127.0.0.1:$port$prefix';
+  static String get localhostUrl => 'http://127.0.0.1:$port$prefix/';
 }

@@ -37,6 +37,9 @@ dependencies:
   file: ^7.0.0
   path_provider: ^2.1.0
   network_info_plus: ^6.0.0
+  flutter_foreground_task: ^9.2.0
+  open_file_manager: ^2.0.1
+  url_launcher: ^6.2.0
 
 dev_dependencies:
   flutter_test:

@@ -2,10 +2,16 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:open_file_manager/open_file_manager.dart';
 
+import 'screens/about_screen.dart';
+import 'screens/help_screen.dart';
 import 'services/webdav_service.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isAndroid) FlutterForegroundTask.initCommunicationPort();
   runApp(const MyApp());
 }
 
@@ -42,6 +48,41 @@ class _HomePageState extends State<HomePage> {
 
   bool get _isUsb => _connectionType == ConnectionType.usb;
   bool get _usbSupported => Platform.isAndroid;
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isAndroid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _initForegroundTask());
+    }
+  }
+
+  Future<void> _initForegroundTask() async {
+    final permission = await FlutterForegroundTask.checkNotificationPermission();
+    if (permission != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
+    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+      await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+    }
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'mac_connect_channel',
+        channelName: 'Mac Connect',
+        channelDescription: 'Shows when file share is running.',
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(60000),
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
+  }
 
   Future<void> _toggle(bool value) async {
     if (_loading) return;
@@ -106,12 +147,57 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _openShareFolderInFileManager() async {
+    try {
+      final path = await WebDavService.getSharePath();
+      final dir = Directory(path);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      if (Platform.isAndroid) {
+        openFileManager(
+          androidConfig: AndroidConfig(
+            folderType: AndroidFolderType.other,
+            folderPath: path,
+          ),
+          iosConfig: const IosConfig(folderPath: 'SharedWithMac'),
+        );
+      } else {
+        openFileManager(iosConfig: const IosConfig(folderPath: 'SharedWithMac'));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open folder: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final child = Scaffold(
       appBar: AppBar(
         title: const Text('Mac Connect'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: 'Help',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const HelpScreen(),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'About',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const AboutScreen(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: ListView(
@@ -197,6 +283,27 @@ class _HomePageState extends State<HomePage> {
               const Divider(),
               const SizedBox(height: 16),
               const Text(
+                'Shared folder on this device',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'The folder shared with your Mac is named "SharedWithMac". '
+                'It lives inside this app\'s documents. Files you add here on the phone '
+                'appear in Finder; files you add from the Mac appear here.',
+                style: TextStyle(color: Colors.black54, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _openShareFolderInFileManager,
+                icon: const Icon(Icons.folder_open),
+                label: const Text('Open shared folder in file browser'),
+              ),
+              const SizedBox(height: 24),
+              const Text(
                 'On your Mac',
                 style: TextStyle(
                   fontSize: 18,
@@ -206,10 +313,45 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 8),
               ..._macInstructions,
             ],
+            const SizedBox(height: 32),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  ),
+                  child: const Text('Help'),
+                ),
+                Text(
+                  ' · ',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.outline,
+                    fontSize: 14,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const AboutScreen(),
+                    ),
+                  ),
+                  child: const Text('About'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
+    return Platform.isAndroid
+        ? WithForegroundTask(child: child)
+        : child;
   }
 
   String get _connectionHint {
@@ -238,7 +380,8 @@ class _HomePageState extends State<HomePage> {
         _CopyableCode('adb forward tcp:8080 tcp:8080'),
         const SizedBox(height: 12),
         const Text(
-          '4. Open Finder → Go → Connect to Server (⌘K) and enter:',
+          '4. Open Finder → Go → Connect to Server (⌘K) and enter the URL below.\n'
+          '5. When asked "Connect as:", choose Guest (no password).',
           style: TextStyle(color: Colors.black87, height: 1.4),
         ),
         const SizedBox(height: 8),
@@ -247,20 +390,27 @@ class _HomePageState extends State<HomePage> {
           child: _UrlChip(WebDavService.localhostUrl),
         ),
         const SizedBox(height: 16),
-        const Text(
-          'After connecting, you can open, edit, save, and delete files in the "SharedWithMac" folder from Finder.',
-          style: TextStyle(color: Colors.black54, height: 1.4),
-        ),
-      ];
-    }
+      const Text(
+        'After connecting, you\'ll see the "SharedWithMac" folder. You can open, edit, save, and delete files from Finder.',
+        style: TextStyle(color: Colors.black54, height: 1.4),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'If Finder connects but you can\'t create or paste files from Mac, try a WebDAV client like Cyberduck with the same URL. '
+        'Use the URL exactly as shown (including http://) and choose Guest when prompted.',
+        style: TextStyle(color: Colors.orange.shade800, fontSize: 13, height: 1.3),
+      ),
+    ];
+  }
 
-    if (_connectionUrl == null) return [];
+  if (_connectionUrl == null) return [];
 
     return [
       const Text(
         '1. Open Finder\n'
         '2. Press ⌘K (or menu Go → Connect to Server)\n'
-        '3. Enter this address and click Connect:',
+        '3. Enter this address and click Connect.\n'
+        '4. When asked "Connect as:", choose Guest (no password).',
         style: TextStyle(color: Colors.black87, height: 1.4),
       ),
       const SizedBox(height: 12),
@@ -270,8 +420,14 @@ class _HomePageState extends State<HomePage> {
       ),
       const SizedBox(height: 16),
       const Text(
-        'After connecting, you can open, edit, save, and delete files in the "SharedWithMac" folder from Finder.',
+        'After connecting, you\'ll see the "SharedWithMac" folder. You can open, edit, save, and delete files from Finder.',
         style: TextStyle(color: Colors.black54, height: 1.4),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'If Finder connects but you can\'t create or paste files from Mac, try a WebDAV client like Cyberduck with the same URL. '
+        'Use the URL exactly as shown (including http://) and choose Guest when prompted.',
+        style: TextStyle(color: Colors.orange.shade800, fontSize: 13, height: 1.3),
       ),
     ];
   }
