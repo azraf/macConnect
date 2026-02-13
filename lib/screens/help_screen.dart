@@ -59,7 +59,15 @@ class HelpScreen extends StatelessWidget {
               'Connection drops or Mac cannot connect',
               '• Ensure the phone and Mac are on the same Wi‑Fi (or Mac is on the phone\'s hotspot).\n'
               '• Use the URL exactly as shown (including http://).\n'
-              '• On Android, allow the app to run in the background and disable battery optimization for Mac Connect if the share stops when the screen is off.',
+              '• On Android, allow the app to run in the background and disable battery optimization for Mac Connect if the share stops when the screen is off.\n'
+              '• On iPhone/iPad: keep the app in the foreground while connecting; iOS suspends the server when the app is backgrounded.\n'
+              '• On iPhone/iPad: if prompted, allow "Local Network" access. If connection fails, check Settings → Privacy & Security → Local Network and ensure Mac Connect is enabled.',
+            ),
+            _section(
+              context,
+              '"Connection refused" when connecting',
+              'Your Wi‑Fi may have client isolation (common on guest/corporate networks), which blocks devices from talking to each other.\n\n'
+              'Try Hotspot mode instead: turn on Mobile Hotspot on your phone, connect your Mac to it, then start the share in Mac Connect using Hotspot mode. The URL will use an address like 192.168.43.1 instead of 10.x.x.x.',
             ),
             const SizedBox(height: 24),
           ],

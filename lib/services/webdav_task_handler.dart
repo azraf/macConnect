@@ -21,30 +21,41 @@ class WebDavTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    final sharePath = await FlutterForegroundTask.getData<String>(key: 'sharePath');
-    if (sharePath == null || sharePath.isEmpty) return;
+    try {
+      final sharePath = await FlutterForegroundTask.getData<String>(key: 'sharePath');
+      if (sharePath == null || sharePath.isEmpty) {
+        print('[WebDAV] onStart: no sharePath');
+        return;
+      }
 
-    final dir = Directory(sharePath);
-    if (!await dir.exists()) await dir.create(recursive: true);
+      final dir = Directory(sharePath);
+      if (!await dir.exists()) await dir.create(recursive: true);
 
-    const fs = LocalFileSystem();
-    final davRoot = fs.directory(sharePath);
-    final config = DAVConfig(
-      root: davRoot,
-      prefix: _prefix,
-      allowAnonymous: true,
-      readOnly: false,
-      verbose: true,
-      enableThrottling: false,
-    );
-    final dav = ShelfDAV.withConfig(config);
+      const fs = LocalFileSystem();
+      final davRoot = fs.directory(sharePath);
+      final config = DAVConfig(
+        root: davRoot,
+        prefix: _prefix,
+        allowAnonymous: true,
+        readOnly: false,
+        verbose: true,
+        enableThrottling: false,
+        // No concurrent request limit — avoids 429 / "no additional users" in Finder.
+        maxConcurrentRequests: null,
+      );
+      final dav = ShelfDAV.withConfig(config);
 
-    _server = await shelf_io.serve(
-      dav.handler,
-      InternetAddress.anyIPv4,
-      _port,
-    );
-    _server!.idleTimeout = const Duration(hours: 8);
+      _server = await shelf_io.serve(
+        dav.handler,
+        InternetAddress.anyIPv4,
+        _port,
+      );
+      _server!.idleTimeout = const Duration(hours: 8);
+      print('[WebDAV] Server listening on port $_port (sharePath: $sharePath)');
+    } catch (e, st) {
+      print('[WebDAV] Failed to start server: $e');
+      print(st);
+    }
   }
 
   @override
@@ -62,9 +73,11 @@ class WebDavTaskHandler extends TaskHandler {
 
   @override
   void onReceiveData(Object data) {
+    // Start closing the server so port is released. Do NOT set _server = null
+    // here so that onDestroy can await server.close() and ensure the port is
+    // fully released before the isolate exits.
     if (data == stopCommand && _server != null) {
       _server!.close(force: true);
-      _server = null;
     }
   }
 

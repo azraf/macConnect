@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:file/local.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -93,6 +94,8 @@ class WebDavService {
       readOnly: false,
       verbose: true,
       enableThrottling: false,
+      // No concurrent request limit — avoids 429 / "no additional users" in Finder.
+      maxConcurrentRequests: null,
     );
     final dav = ShelfDAV.withConfig(config);
 
@@ -103,17 +106,29 @@ class WebDavService {
         port,
       );
       _server!.idleTimeout = const Duration(hours: 8);
-      return _getUrl();
+      final url = await _getUrl();
+      if (url != null) {
+        debugPrint('WebDAV server started on port $port, URL: $url');
+      }
+      return url;
     } catch (e) {
       _sharePath = null;
       rethrow;
     }
   }
 
-  /// Stop the WebDAV server.
+  /// Stop the WebDAV server and release all bound ports.
   Future<void> stop() async {
     if (Platform.isAndroid) {
-      FlutterForegroundTask.sendDataToTask(WebDavTaskHandler.stopCommand);
+      final wasRunning = await FlutterForegroundTask.isRunningService;
+      if (wasRunning) {
+        // Tell the foreground task to close the server so the port is released.
+        FlutterForegroundTask.sendDataToTask(WebDavTaskHandler.stopCommand);
+        // Give the task isolate time to receive the message, close the server,
+        // and release the port before we tear down the service. Otherwise the
+        // port can remain in use and "Address already in use" occurs on next start.
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+      }
       await FlutterForegroundTask.stopService();
       _sharePath = null;
       return;

@@ -158,10 +158,10 @@ class _HomePageState extends State<HomePage> {
             folderType: AndroidFolderType.other,
             folderPath: path,
           ),
-          iosConfig: const IosConfig(folderPath: 'SharedWithMac'),
+          iosConfig: IosConfig(folderPath: 'SharedWithMac'),
         );
       } else {
-        openFileManager(iosConfig: const IosConfig(folderPath: 'SharedWithMac'));
+        openFileManager(iosConfig: IosConfig(folderPath: 'SharedWithMac'));
       }
     } catch (e) {
       if (mounted) {
